@@ -1,45 +1,63 @@
 const bcrypt = require('bcryptjs');
-const { UserInputError } = require('apollo-server');
+const { UserInputError, AuthenticationError } = require('apollo-server');
+const jwt = require('jsonwebtoken');
+const { Op } = require('sequelize');
 
-const { User } = require('../../models')
+const { User } = require('../../models');
+const { JWT_SECRET } = require('../../config/env.json');
 
 const resolvers = {
   Query: {
-    users: async () => {
+    users: async (_, __, context) => {
       try {
-        const users = await User.findAll();
+        let user = '';
+        if (context.req && context.req.headers.authorization) {
+          const token = context.req.headers.authorization.split('Bearer ')[1];
+          jwt.verify(token, JWT_SECRET, (err, decoded) => {
+            if (err) {
+              throw new AuthenticationError('unauthenticated');
+            }
+            user = decoded;
+          });
+        }
+        const users = await User.findAll({
+          where: {
+            username: {
+              [Op.ne]: user.username,
+            },
+          },
+        });
+
         return users;
       } catch (err) {
         throw new Error(err);
       }
-    }
+    },
   },
   Mutation: {
     register: async (_, { input }) => {
-      let {
+      const {
         username,
-        password,
         email,
         confirmPassword,
       } = input;
+      let { password } = input;
       const errors = {};
       try {
-        //TODO: validate input data
-        //TODO: create if username / email exists
-        //TODO: create user
-        if(username.trim() === '') {
+        if (username.trim() === '') {
           errors.username = 'username must not be empty';
-        } 
-        if(password.trim() === '') {
+        }
+        if (password.trim() === '') {
           errors.password = 'password must not be empty';
         }
-         if(email.trim() === '') {
+        if (email.trim() === '') {
           errors.email = 'email must not be empty';
         }
-        if(confirmPassword.trim() === '') {
+        if (confirmPassword.trim() === '') {
           errors.password = 'repeat password must not be empty';
         }
-        if(password !== confirmPassword) {
+
+        if (password !== confirmPassword) {
           errors.confirmPassword = 'password must match';
         }
 
@@ -53,19 +71,19 @@ const resolvers = {
           //errors.email = 'email is taken';
         /*}*/
 
-        if(Object.keys(errors).length > 0) {
+        if (Object.keys(errors).length > 0) {
           throw errors;
         }
-        
+
         password = await bcrypt.hash(password, 6);
-        
+
         const user = await User.create({
           username,
           email,
           password,
         });
         return user;
-      } catch(err) {
+      } catch (err) {
         console.log(err);
         if (err.name === 'SequelizeUniqueConstraintError') {
           err.errors.forEach((e) => (errors[e.path] = e.message));
@@ -74,8 +92,50 @@ const resolvers = {
         }
         throw new UserInputError('Bat input', { errors });
       }
-    }
-  }
-}
+    },
+    login: async (_, { input }) => {
+      const { username, password } = input;
+      const errors = {};
+      try {
+        if (username.trim() === '') {
+          errors.username = 'username must not be empty';
+        }
 
-module.exports = resolvers
+        if (password.trim() === '') {
+          errors.password = 'username must not be empty';
+        }
+
+        if (Object.keys(errors).length > 0) {
+          throw new UserInputError('bad input', { errors });
+        }
+
+        const user = await User.findOne({ where: { username } });
+
+        if (!user) {
+          errors.username = 'user not found';
+          throw new UserInputError('user not found', { errors });
+        }
+
+        const correctPassword = await bcrypt.compare(password, user.password);
+
+        if (!correctPassword) {
+          errors.password = 'password is incorrect';
+          throw new AuthenticationError('password is incorrect', { errors });
+        }
+
+        const token = jwt.sign({ username }, JWT_SECRET, { expiresIn: 60 * 60 });
+
+        return {
+          ...user.toJSON(),
+          createdAt: user.createdAt.toISOString(),
+          token,
+        };
+      } catch (err) {
+        console.log(err);
+        throw err;
+      }
+    },
+  },
+};
+
+module.exports = resolvers;
