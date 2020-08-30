@@ -8,17 +8,10 @@ const { JWT_SECRET } = require('../../config/env.json');
 
 const resolvers = {
   Query: {
-    users: async (_, __, context) => {
+    users: async (_, __, { user }) => {
       try {
-        let user = '';
-        if (context.req && context.req.headers.authorization) {
-          const token = context.req.headers.authorization.split('Bearer ')[1];
-          jwt.verify(token, JWT_SECRET, (err, decoded) => {
-            if (err) {
-              throw new AuthenticationError('unauthenticated');
-            }
-            user = decoded;
-          });
+        if (!user) {
+          throw new AuthenticationError('Unauthenticated');
         }
         const users = await User.findAll({
           where: {
@@ -54,7 +47,7 @@ const resolvers = {
           errors.email = 'email must not be empty';
         }
         if (confirmPassword.trim() === '') {
-          errors.password = 'repeat password must not be empty';
+          errors.confirmPassword = 'repeat password must not be empty';
         }
 
         if (password !== confirmPassword) {
@@ -102,7 +95,7 @@ const resolvers = {
         }
 
         if (password.trim() === '') {
-          errors.password = 'username must not be empty';
+          errors.password = 'password must not be empty';
         }
 
         if (Object.keys(errors).length > 0) {
@@ -120,7 +113,7 @@ const resolvers = {
 
         if (!correctPassword) {
           errors.password = 'password is incorrect';
-          throw new AuthenticationError('password is incorrect', { errors });
+          throw new UserInputError('password is incorrect', { errors });
         }
 
         const token = jwt.sign({ username }, JWT_SECRET, { expiresIn: 60 * 60 });
